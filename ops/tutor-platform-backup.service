@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up tutor platform database and private files
+After=docker.service
+[Service]
+Type=oneshot
+User=user
+Group=user
+UMask=0077
+ExecStart=/bin/bash /home/user/tutor-platform/ops/backup.sh

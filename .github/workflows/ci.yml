@@ -1,0 +1,52 @@
+name: Check tutor platform
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: tutor
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tutor"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/tutor
+      AUTH_SECRET: ci-test-only-secret-with-at-least-32-characters
+      AUTH_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "true"
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      UPLOAD_DIR: ${{ runner.temp }}/tutor-uploads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run build
+      - name: Package and migrate a standalone release
+        run: |
+          node ops/package.mjs
+          cp -a .release "$RUNNER_TEMP/tutor-release"
+          node "$RUNNER_TEMP/tutor-release/migrate.cjs"
+      - name: Start release and check application scenarios
+        run: |
+          PORT=3000 HOSTNAME=127.0.0.1 node "$RUNNER_TEMP/tutor-release/server.js" > "$RUNNER_TEMP/tutor.log" 2>&1 &
+          for attempt in {1..30}; do
+            if curl -fsS http://localhost:3000/api/healthz > /dev/null; then break; fi
+            sleep 1
+          done
+          node tests/integration.mjs
+      - name: Show application logs on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/tutor.log" 2>/dev/null || true

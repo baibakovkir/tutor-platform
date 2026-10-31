@@ -1,0 +1,7 @@
+[Unit]
+Description=Daily tutor platform backup
+[Timer]
+OnCalendar=*-*-* 03:40:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,52 @@
+{
+  "name": "tutor-platform",
+  "version": "0.2.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Self-hosted tutoring workspace based on MyClass",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
+    "db:migrate:undo": "tsx --env-file=.env scripts/migrate.ts undo",
+    "set-password": "tsx --env-file=.env scripts/set-password.ts",
+    "test:integration": "node tests/integration.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "date-fns": "^3.6.0",
+    "date-fns-tz": "^3.2.0",
+    "lucide-react": "^0.469.0",
+    "next": "15.5.28",
+    "next-auth": "5.0.0-beta.32",
+    "pg": "^8.13.1",
+    "pg-hstore": "^2.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sequelize": "^6.37.5",
+    "tsx": "^4.19.2",
+    "umzug": "^3.8.2",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.28",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "postcss": "^8.5.32",
+    "nanoid": "^3.3.18",
+    "sharp": "^0.35.5"
+  }
+}
