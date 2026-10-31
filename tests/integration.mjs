@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { checkGames, checkGamesBrowser } from "./games.mjs";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import pg from "pg";
@@ -371,6 +372,30 @@ try {
     400,
   );
   pass("CSRF protection and custom template validation");
+  const gameFixture = await checkGames({
+    teacher,
+    otherTeacher,
+    pupil,
+    otherPupil,
+    studentId: s.id,
+    lessonId: l.id,
+    restart:
+      process.env.TUTOR_TEST_RESTART === "1"
+        ? () =>
+            new Promise((resolve, reject) => {
+              const timer = setTimeout(
+                () => reject(new Error("Restart hook timeout")),
+                30000,
+              );
+              process.once("message", (message) => {
+                clearTimeout(timer);
+                if (message === "ready") resolve();
+                else reject(new Error("Restart failed"));
+              });
+              process.send({ type: "restart" });
+            })
+        : undefined,
+  });
   if (process.env.PLAYWRIGHT_MODULE) {
     const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
     browser = await chromium.launch({
@@ -521,6 +546,7 @@ try {
       path: "artifacts/pupil-mobile.png",
       fullPage: true,
     });
+    await checkGamesBrowser({ page, pupilPage, base, studentId: s.id, db });
     assert.deepEqual(errors, []);
     await context.close();
     await pupilContext.close();
@@ -528,7 +554,30 @@ try {
       "mobile layout, pupil invitation redemption, homework submission, no browser errors",
     );
   }
+  const revokedStream = await pupil.fetch("/api/games/events");
+  const revokedReader = revokedStream.body.getReader();
+  await revokedReader.read();
   await teacher.call(`students/${s.id}/invite`, {});
+  let revokedText = "";
+  try {
+    for (
+      let attempt = 0;
+      attempt < 8 && !revokedText.includes("event: revoked");
+      attempt++
+    ) {
+      const chunk = await revokedReader.read();
+      if (chunk.done) break;
+      revokedText += new TextDecoder().decode(chunk.value);
+    }
+    assert.ok(
+      revokedText.includes("event: revoked"),
+      "Rotated link must terminate active game stream",
+    );
+  } finally {
+    await revokedReader.cancel();
+  }
+  pass("active game stream is revoked with the student invitation");
+
   await pupil.call("snapshot", undefined, "GET", 401);
   assert.equal(
     (await pupil.fetch("/api/portal/access", { token })).status,
@@ -556,6 +605,8 @@ try {
   await browser?.close();
   // Delete only records belonging to the two disposable fixture owners.
   if (owners.length) {
+    await db.query("DELETE FROM game_rooms WHERE owner_id=ANY($1)", [owners]);
+    await db.query("DELETE FROM game_sets WHERE owner_id=ANY($1)", [owners]);
     const files = await db.query(
       "SELECT f.id FROM classroom_files f JOIN classroom_homework h ON h.id=f.homework_id WHERE h.owner_id=ANY($1)",
       [owners],

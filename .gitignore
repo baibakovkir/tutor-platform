@@ -47,3 +47,6 @@ backups/*
 storage/
 access.txt
 artifacts/
+
+# Educational materials
+books/

@@ -15,7 +15,10 @@
     "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
     "db:migrate:undo": "tsx --env-file=.env scripts/migrate.ts undo",
     "set-password": "tsx --env-file=.env scripts/set-password.ts",
-    "test:integration": "node tests/integration.mjs"
+    "test:integration": "node tests/integration.mjs",
+    "games:build": "node scripts/games/build-bank.mjs",
+    "games:check": "node scripts/games/build-bank.mjs --check",
+    "prebuild": "npm run games:check"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

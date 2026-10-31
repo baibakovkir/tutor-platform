@@ -24,6 +24,7 @@ import {
   ExternalLink,
   FileText,
   GraduationCap,
+  Gamepad2,
   LayoutDashboard,
   Link2,
   LogOut,
@@ -195,6 +196,37 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
     [week, setWeek] = useState(weekStartStr(todayVN())),
     [payFilter, setPayFilter] = useState("all"),
     [hwFilter, setHwFilter] = useState("all");
+  const [activeGames, setActiveGames] = useState<
+    {
+      id: string;
+      studentName: string;
+      state: { title: string; phase: string };
+    }[]
+  >([]);
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const r = await fetch("/api/games", { cache: "no-store" });
+        if (r.ok) {
+          const games = await r.json();
+          if (alive)
+            setActiveGames(
+              games.filter(
+                (g: { state: { phase: string } }) =>
+                  g.state.phase !== "finished",
+              ),
+            );
+        }
+      } catch {}
+    };
+    void check();
+    const t = setInterval(() => void check(), 10000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
   const refresh = useCallback(async () => {
     try {
       const r = await fetch("/api/classroom/snapshot", { cache: "no-store" });
@@ -562,6 +594,10 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                 )}
               </button>
             ))}
+          <Link className="nav-item" href="/games">
+            <Gamepad2 size={19} />
+            Игровые занятия
+          </Link>
         </nav>
         <div className="sidebar-bottom">
           <div className="sidebar-note">
@@ -623,6 +659,22 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
           </div>
         </header>
         <main className="main">
+          {activeGames.length > 0 && (
+            <Link
+              className="notice success"
+              href={"/games?room=" + activeGames[0].id}
+            >
+              <Gamepad2 size={20} />
+              <span>
+                {isTeacher ? "Продолжить игру" : "Вас ждёт игра"}:{" "}
+                {activeGames[0].state.title}
+                {activeGames.length > 1
+                  ? ` · ещё ${activeGames.length - 1}`
+                  : ""}
+              </span>
+              <ArrowRight size={17} />
+            </Link>
+          )}
           <div className="page-heading">
             <div>
               <span className="eyebrow">
@@ -1068,6 +1120,14 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                         {s.phone && <span>{s.phone}</span>}
                       </div>
                       <div className="student-card-actions">
+                        <Link
+                          className="icon-btn"
+                          title="Игры и результаты"
+                          aria-label={"Игры " + s.name}
+                          href={"/games?student=" + s.id}
+                        >
+                          <Gamepad2 size={18} />
+                        </Link>
                         <button
                           className="btn subtle"
                           onClick={() => open({ kind: "student", student: s })}
@@ -1534,6 +1594,7 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
               </a>
             </section>
           )}
+
           <footer className="app-footer">
             <span>класс / пространство для занятий</span>
             <span>Пусть всё получится ✦</span>
@@ -1750,6 +1811,13 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                   <BookOpen size={16} />
                   Назначить домашнее задание
                 </button>
+                <Link
+                  className="btn"
+                  href={`/games?student=${modal.lesson.studentId}&lesson=${modal.lesson.id}`}
+                >
+                  <Gamepad2 size={16} />
+                  Запустить игру по этому занятию
+                </Link>
                 <button
                   className="btn subtle"
                   onClick={() =>
