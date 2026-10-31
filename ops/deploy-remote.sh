@@ -42,7 +42,7 @@ if [ "$TUTOR_READY" != true ]; then
     exit 1
 fi
 sudo -n mkdir -p /var/www/tutor-acme
-if [ ! -f /etc/letsencrypt/live/tutor.baibakovkir.space/fullchain.pem ]; then
+if ! sudo -n test -f /etc/letsencrypt/live/tutor.baibakovkir.space/fullchain.pem; then
     sudo -n install -m 644 ops/nginx-http.conf /etc/nginx/conf.d/tutor-platform.conf
     sudo -n nginx -t
     sudo -n systemctl reload nginx
