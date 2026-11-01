@@ -24,7 +24,7 @@ jobs:
       AUTH_URL: http://localhost:3000
       AUTH_TRUST_HOST: "true"
       NEXT_PUBLIC_APP_URL: http://localhost:3000
-      UPLOAD_DIR: ${{ runner.temp }}/tutor-uploads
+      UPLOAD_DIR: /tmp/tutor-ci-uploads
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

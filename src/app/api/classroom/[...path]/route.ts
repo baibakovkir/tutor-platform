@@ -1,3 +1,5 @@
+import { legacySet } from "@/lib/games/legacy";
+import { getSet } from "@/lib/games/service";
 import { NextResponse } from "next/server";
 import { ZodError, z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -36,6 +38,7 @@ async function homework(a: Actor, id: number) {
     id: number;
     student_id: number;
     exercise_id: number | null;
+    learning_set_id?: string;
   }>(
     `SELECT h.* FROM classroom_homework h JOIN students s ON s.id=h.student_id WHERE h.id=:id AND h.owner_id=:owner AND s."deletedAt" IS NULL`,
     { id, owner: a.ownerId },
@@ -70,6 +73,11 @@ async function snapshot(a: Actor) {
     `SELECT h.*,s.name AS "studentName",e.title AS "exerciseTitle",e.kind,e.prompt,e.options${a.role === "teacher" ? ",e.answer,e.explanation" : ""} FROM classroom_homework h JOIN students s ON s.id=h.student_id LEFT JOIN classroom_exercises e ON e.id=h.exercise_id WHERE h.owner_id=:owner AND s."deletedAt" IS NULL${filter} ORDER BY h.due_date,h.id DESC`,
     bind,
   );
+  for (const h of hw) {
+    const snapshot = h.learning_snapshot as { items?: unknown[] } | null;
+    h.learning_count = snapshot?.items?.length || 0;
+    delete h.learning_snapshot;
+  }
   const files = await rows(
     `SELECT f.* FROM classroom_files f JOIN classroom_homework h ON h.id=f.homework_id JOIN students s ON s.id=h.student_id WHERE h.owner_id=:owner AND s."deletedAt" IS NULL${filter} ORDER BY f.created_at`,
     bind,
@@ -189,6 +197,11 @@ async function handle(req: Request, context: Context) {
     if (a.role !== "student")
       throw new HttpError(403, "Отправка доступна ученику.");
     const h = await homework(a, idSchema.parse(rawId));
+    if (h.learning_set_id)
+      throw new HttpError(
+        400,
+        "Откройте набор заданий и отправьте ответы по отдельности.",
+      );
     const { response } = z
       .object({
         response: z.string().trim().min(1, "Напишите ответ.").max(20000),
@@ -460,8 +473,11 @@ async function handle(req: Request, context: Context) {
       if (l.studentId !== h.studentId)
         throw new HttpError(400, "Занятие принадлежит другому ученику.");
     }
+    if (h.learningSetId && h.exerciseId)
+      throw new HttpError(400, "Выберите один источник заданий.");
+    const library = h.learningSetId ? await getSet(a, h.learningSetId) : null;
     const [created] = await rows<{ id: number }>(
-      `INSERT INTO classroom_homework(student_id,owner_id,session_id,title,body,due_date,exercise_id) VALUES(:student,:owner,:session,:title,:body,:due,:exercise) RETURNING id`,
+      `INSERT INTO classroom_homework(student_id,owner_id,session_id,title,body,due_date,exercise_id,learning_set_id,learning_snapshot) VALUES(:student,:owner,:session,:title,:body,:due,:exercise,:set,CAST(:snapshot AS jsonb)) RETURNING id`,
       {
         student: h.studentId,
         owner: a.ownerId,
@@ -470,6 +486,8 @@ async function handle(req: Request, context: Context) {
         body: h.body,
         due: h.due,
         exercise: h.exerciseId,
+        set: library?.id || null,
+        snapshot: library ? JSON.stringify(library) : null,
       },
     );
     return NextResponse.json(created, { status: 201 });
@@ -490,10 +508,27 @@ async function handle(req: Request, context: Context) {
   }
   if (resource === "exercises" && req.method === "POST") {
     const e = exerciseInput.parse(body);
-    const [created] = await rows<{ id: number }>(
-      `INSERT INTO classroom_exercises(owner_id,title,kind,prompt,options,answer,explanation) VALUES(:owner,:title,:kind,:prompt,CAST(:options AS jsonb),:answer,:explanation) RETURNING id`,
-      { ...e, owner: a.ownerId, options: JSON.stringify(e.options) },
-    );
+    const created = await sequelize.transaction(async (transaction) => {
+      const [created] = await rows<{ id: number }>(
+        `INSERT INTO classroom_exercises(owner_id,title,kind,prompt,options,answer,explanation) VALUES(:owner,:title,:kind,:prompt,CAST(:options AS jsonb),:answer,:explanation) RETURNING id`,
+        { ...e, owner: a.ownerId, options: JSON.stringify(e.options) },
+        transaction,
+      );
+      const id = randomUUID();
+      const set = legacySet({ ...e, id: created.id }, id);
+      await run(
+        "INSERT INTO game_sets(id,owner_id,title,payload,legacy_exercise_id) VALUES(:id,:owner,:title,CAST(:payload AS jsonb),:legacy)",
+        {
+          id,
+          owner: a.ownerId,
+          title: e.title,
+          payload: JSON.stringify(set),
+          legacy: created.id,
+        },
+        transaction,
+      );
+      return created;
+    });
     return NextResponse.json(created, { status: 201 });
   }
   if (resource === "password" && req.method === "POST") {

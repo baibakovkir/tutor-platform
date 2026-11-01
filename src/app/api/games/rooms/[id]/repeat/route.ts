@@ -19,11 +19,8 @@ export async function POST(
       room.state.log.filter((e) => !e.correct).map((e) => e.itemId),
     );
     const items = room.state.items.filter((i) => ids.has(i.id));
-    if (items.length < 2)
-      throw new HttpError(
-        400,
-        "Для набора нужны хотя бы два разных задания. Можно скопировать исходный набор и добавить упражнения.",
-      );
+    if (items.length < 1)
+      throw new HttpError(400, "В игре пока нет заданий для повторения.");
     return Response.json(
       {
         id: "",

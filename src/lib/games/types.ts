@@ -3,7 +3,7 @@ export type Mode = "guided" | "coop" | "duel";
 export type Kind = "pairs" | "sentence" | "race" | "quiz" | "quest";
 export type Item = {
   id: string;
-  type: "pair" | "sentence" | "choice";
+  type: "pair" | "sentence" | "choice" | "text";
   prompt: string;
   answer: string;
   options?: string[];
@@ -14,6 +14,9 @@ export type Item = {
   hint?: string;
 };
 export type GameSet = {
+  sourceKey?: string;
+  baseSetId?: string;
+  isCustom?: boolean;
   id: string;
   title: string;
   course: string;
@@ -23,12 +26,12 @@ export type GameSet = {
   items: Item[];
 };
 export type Card = { id: string; pair: string; text: string };
-export type Answer = { response: string; correct: boolean };
+export type Answer = { response: string; correct: boolean | null };
 export type Entry = {
   round: number;
   itemId: string;
   role: Role;
-  correct: boolean;
+  correct: boolean | null;
   response: string;
   expected: string;
   explanation: string;
@@ -77,9 +80,12 @@ export type Command = {
     | "pause"
     | "resume"
     | "finish"
-    | "hint";
+    | "hint"
+    | "mark";
   card?: string;
   answer?: string;
+  target?: Role;
+  correct?: boolean;
 };
 export type PublicItem = Omit<Item, "answer" | "alternatives"> & {
   tokens?: { id: string; text: string }[];
@@ -91,7 +97,10 @@ export type PublicState = Omit<
   cards: { id: string; text: string | null; matched: boolean }[];
   item: PublicItem | null;
   answers: Partial<
-    Record<Role, { submitted: boolean; response?: string; correct?: boolean }>
+    Record<
+      Role,
+      { submitted: boolean; response?: string; correct?: boolean | null }
+    >
   >;
   total: number;
   expected?: string;

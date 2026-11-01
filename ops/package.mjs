@@ -55,7 +55,8 @@ for (const file of await readdir("src/migrations")) {
     platform: "node",
     target: "node20",
     format: "cjs",
-    bundle: false,
+    bundle: true,
+    external: ["sequelize", "umzug"],
   });
 }
 await copyFile("ops/migrate.cjs", destination + "/migrate.cjs");

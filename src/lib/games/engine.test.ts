@@ -302,3 +302,62 @@ describe("complete authored curriculum", () => {
         ).not.toThrow();
   });
 });
+
+describe("teacher-reviewed written answers", () => {
+  const manual = [
+    {
+      id: "written",
+      type: "text" as const,
+      prompt: "Explain your favourite hobby.",
+      answer: "",
+      explanation: "Check clarity and grammar.",
+    },
+  ];
+  it("supports one task and waits for a teacher mark without exposing the rubric", () => {
+    let s = createState(
+      {
+        title: "Discussion",
+        kind: "quiz",
+        mode: "guided",
+        items: manual,
+        timerSeconds: 30,
+      },
+      "secret",
+      1000,
+    );
+    s = move(s, "student", "answer", { answer: "I enjoy swimming." });
+    expect(s.revealed).toBe(false);
+    expect(s.deadline).toBe(null);
+    expect(publicState(s, "teacher").answers.student?.response).toBe(
+      "I enjoy swimming.",
+    );
+    expect(() =>
+      move(s, "student", "mark", { target: "student", correct: true }),
+    ).toThrow("преподаватель");
+    s = move(s, "teacher", "mark", { target: "student", correct: true });
+    expect(s.scores.student).toBe(1);
+    expect(s.revealed).toBe(true);
+    expect(() =>
+      move(s, "teacher", "mark", { target: "student", correct: false }),
+    ).toThrow("проверки");
+  });
+  it("requires both duel responses before the teacher can grade either", () => {
+    let s = createState(
+      { title: "Discussion", kind: "quiz", mode: "duel", items: manual },
+      "secret",
+    );
+    s = move(s, "student", "answer", { answer: "Swimming." });
+    expect(publicState(s, "teacher").answers.student).toEqual({
+      submitted: true,
+    });
+    expect(() =>
+      move(s, "teacher", "mark", { target: "student", correct: true }),
+    ).toThrow("оба");
+    s = move(s, "teacher", "answer", { answer: "Hiking." });
+    s = move(s, "teacher", "mark", { target: "student", correct: true });
+    expect(s.revealed).toBe(false);
+    s = move(s, "teacher", "mark", { target: "teacher", correct: false });
+    expect(s.revealed).toBe(true);
+    expect(s.scores).toEqual({ teacher: 0, student: 1 });
+  });
+});

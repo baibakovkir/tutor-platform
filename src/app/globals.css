@@ -2317,3 +2317,5 @@ td small {
     transition: none !important;
   }
 }
+
+.btn[hidden]{display:none}

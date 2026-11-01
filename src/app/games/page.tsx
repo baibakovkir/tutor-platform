@@ -31,6 +31,7 @@ import {
 import type { GameSet, Item, Kind, Mode, Room } from "@/lib/games/types";
 import type { Snapshot } from "@/lib/classroom/types";
 import "./games.css";
+import { todayVN, addDaysStr } from "@/lib/time";
 const kinds: Record<
   Kind,
   { label: string; description: string; symbol: string }
@@ -69,6 +70,17 @@ const modeNames: Record<Mode, string> = {
 type SetSummary = Omit<GameSet, "items"> & {
   counts: Record<Item["type"], number>;
 };
+function matchesKind(item: Item | undefined, kind: Kind) {
+  return (
+    !!item &&
+    (kind === "quest" ||
+      (kind === "pairs"
+        ? item.type === "pair"
+        : kind === "sentence"
+          ? item.type === "sentence"
+          : ["choice", "text"].includes(item.type)))
+  );
+}
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(path, {
     cache: "no-store",
@@ -105,6 +117,10 @@ export default function Games() {
     [questSets, setQuestSets] = useState<string[]>([]),
     [kind, setKind] = useState<Kind>("pairs"),
     [mode, setMode] = useState<Mode>("guided"),
+    [assigning, setAssigning] = useState<GameSet | null>(null),
+    [assignmentIds, setAssignmentIds] = useState<string[]>([]),
+    [launchItems, setLaunchItems] = useState<Item[]>([]),
+    [launchIds, setLaunchIds] = useState<string[]>([]),
     [draft, setDraft] = useState<GameSet | null>(null),
     [editing, setEditing] = useState(false),
     [text, setText] = useState(""),
@@ -124,11 +140,9 @@ export default function Games() {
           : Promise.resolve([]),
       ]);
       setRooms(r);
-      const priority = (id: string) =>
-        id.startsWith("gogetter") ? 1 : id.startsWith("essential") ? 2 : 0;
-      setSets(
-        ss.sort((a, b) => priority(a.id) - priority(b.id) || a.unit - b.unit),
-      );
+      const priority = (s: SetSummary) =>
+        s.isCustom ? 0 : s.sourceKey?.startsWith("gogetter") ? 1 : 2;
+      setSets(ss.sort((a, b) => priority(a) - priority(b) || a.unit - b.unit));
       if (d.role === "student") setTab("rooms");
     } catch (e) {
       setError((e as Error).message);
@@ -167,6 +181,33 @@ export default function Games() {
   const chosenId = chosen?.id;
   useEffect(() => {
     setQuestSets(chosenId ? Array(5).fill(chosenId) : []);
+    setLaunchItems([]);
+    setLaunchIds([]);
+    let active = true;
+    if (chosenId)
+      api<GameSet>("/api/games/sets?id=" + encodeURIComponent(chosenId))
+        .then((set) => {
+          if (active) {
+            setLaunchItems(set.items);
+            setLaunchIds(set.items.map((i) => i.id));
+            setKind((previous) =>
+              matchesKind(
+                set.items.find((i) => matchesKind(i, previous)),
+                previous,
+              )
+                ? previous
+                : set.items.some((i) => i.type === "pair")
+                  ? "pairs"
+                  : set.items.some((i) => i.type === "sentence")
+                    ? "sentence"
+                    : "quiz",
+            );
+          }
+        })
+        .catch((e) => setError(e.message));
+    return () => {
+      active = false;
+    };
   }, [chosenId]);
   const clearLatest = useRef<() => void>(() => {});
   clearLatest.current = () => void sendCommand("clear");
@@ -178,7 +219,7 @@ export default function Games() {
     const t = setTimeout(() => clearLatest.current(), 1300);
     return () => clearTimeout(t);
   }, [autoClear, busy, connected, version]);
-  const overlayOpen = !!chosen || !!draft;
+  const overlayOpen = !!chosen || !!draft || !!assigning;
   useEffect(() => {
     if (!overlayOpen) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -197,6 +238,7 @@ export default function Games() {
       if (e.key === "Escape") {
         setChosen(null);
         setDraft(null);
+        setAssigning(null);
       }
       if (e.key === "Tab") {
         const nodes = Array.from(
@@ -239,7 +281,8 @@ export default function Games() {
       | "pause"
       | "resume"
       | "finish"
-      | "hint",
+      | "hint"
+      | "mark",
     extra: Record<string, unknown> = {},
   ) {
     if (!room || busy) return;
@@ -305,6 +348,7 @@ export default function Games() {
         lessonId: f.get("lesson") ? Number(f.get("lesson")) : null,
         timerSeconds: Number(f.get("timer")),
         stageSetIds: kind === "quest" ? questSets : undefined,
+        itemIds: kind === "quest" ? undefined : launchIds,
         count: Number(f.get("count")),
       });
       await refresh();
@@ -340,11 +384,6 @@ export default function Games() {
       setDraft(null);
       setNotice("Набор сохранён в вашей библиотеке.");
       await refresh();
-      setChosen(
-        (await api<SetSummary[]>("/api/games/sets")).find(
-          (s) => s.id === r.id,
-        ) || null,
-      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -408,7 +447,7 @@ export default function Games() {
       <div className="games-title">
         <div>
           <span className="eyebrow">УЧИМСЯ, ПОКА ИГРАЕМ</span>
-          <h1>{s ? s.title : "Игровые занятия"}</h1>
+          <h1>{s ? s.title : "Задания и игры"}</h1>
           <p>
             {s
               ? `${room.studentName} · ${modeNames[s.mode]} · ${kinds[s.kind].label}`
@@ -595,9 +634,10 @@ export default function Games() {
                     <article className="panel game-set" key={set.id}>
                       <div className="card-topline">
                         <span className="pill lavender">
-                          {set.id.startsWith("essential")
+                          {set.isCustom && "Мой · "}
+                          {set.sourceKey?.startsWith("essential")
                             ? "Murphy"
-                            : set.id.startsWith("gogetter")
+                            : set.sourceKey?.startsWith("gogetter")
                               ? "GoGetter 3"
                               : "Мой набор"}
                         </span>
@@ -619,7 +659,25 @@ export default function Games() {
                           }}
                         >
                           <Play size={15} />
-                          Играть
+                          На урок
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={async () => {
+                            try {
+                              const full = await api<GameSet>(
+                                "/api/games/sets?id=" +
+                                  encodeURIComponent(set.id),
+                              );
+                              setAssignmentIds(full.items.map((i) => i.id));
+                              setAssigning(full);
+                              setError("");
+                            } catch (e) {
+                              setError((e as Error).message);
+                            }
+                          }}
+                        >
+                          В ДЗ
                         </button>
                         <button
                           className="text-btn"
@@ -628,15 +686,14 @@ export default function Games() {
                           <Copy size={14} />
                           Копировать
                         </button>
-                        {!set.id.startsWith("essential") &&
-                          !set.id.startsWith("gogetter") && (
-                            <button
-                              className="text-btn"
-                              onClick={() => void editSet(set.id, false)}
-                            >
-                              Изменить
-                            </button>
-                          )}
+                        {
+                          <button
+                            className="text-btn"
+                            onClick={() => void editSet(set.id, false)}
+                          >
+                            Изменить
+                          </button>
+                        }
                       </div>
                     </article>
                   ))}
@@ -776,7 +833,12 @@ export default function Games() {
                     <button
                       className="btn primary"
                       onClick={() => {
-                        const set = sets.find((x) => x.id === s.setId);
+                        const set = sets.find(
+                          (x) =>
+                            x.id === s.setId ||
+                            x.sourceKey === s.setId ||
+                            x.baseSetId === s.setId,
+                        );
                         if (set) setChosen(set);
                         else
                           setError(
@@ -877,13 +939,62 @@ export default function Games() {
                         </p>
                       )}
                     </div>
+                  ) : s.item.type === "text" &&
+                    isTeacher &&
+                    Object.values(s.answers).some((a) => a?.correct === null) &&
+                    (s.mode !== "duel" ||
+                      (s.answers.teacher && s.answers.student)) ? (
+                    <div className="round-result">
+                      <h3>Проверьте ответы</h3>
+                      {(["teacher", "student"] as const)
+                        .filter((r) => s.answers[r])
+                        .map((r) => (
+                          <div className="manual-answer" key={r}>
+                            <strong>
+                              {r === "teacher" ? "Преподаватель" : "Ученик"}
+                            </strong>
+                            <p>{s.answers[r]?.response}</p>
+                            {s.answers[r]?.correct === null ? (
+                              <div className="form-actions">
+                                <button
+                                  className="btn primary"
+                                  disabled={busy || !connected}
+                                  onClick={() =>
+                                    void sendCommand("mark", {
+                                      target: r,
+                                      correct: true,
+                                    })
+                                  }
+                                >
+                                  Верно
+                                </button>
+                                <button
+                                  className="btn"
+                                  disabled={busy || !connected}
+                                  onClick={() =>
+                                    void sendCommand("mark", {
+                                      target: r,
+                                      correct: false,
+                                    })
+                                  }
+                                >
+                                  Нужно повторить
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="pill green">Проверено</span>
+                            )}
+                          </div>
+                        ))}
+                    </div>
                   ) : pending ? (
                     <div className="waiting-answer">
                       <Check size={34} />
                       <h3>Ответ принят</h3>
                       <p>
-                        Ждём второго участника. Результат откроется у обоих
-                        одновременно.
+                        {s.item.type === "text"
+                          ? "Ожидаем проверку преподавателя."
+                          : "Ждём второго участника. Результат откроется у обоих одновременно."}
                       </p>
                     </div>
                   ) : (
@@ -1342,6 +1453,40 @@ export default function Games() {
                     ))}
                 </select>
               </label>
+              {kind !== "quest" && (
+                <details className="task-selection">
+                  <summary>
+                    Задания для игры ·{" "}
+                    {
+                      launchIds.filter((id) =>
+                        matchesKind(
+                          launchItems.find((i) => i.id === id),
+                          kind,
+                        ),
+                      ).length
+                    }{" "}
+                    выбрано
+                  </summary>
+                  {launchItems
+                    .filter((i) => matchesKind(i, kind))
+                    .map((i) => (
+                      <label key={i.id}>
+                        <input
+                          type="checkbox"
+                          checked={launchIds.includes(i.id)}
+                          onChange={(e) =>
+                            setLaunchIds(
+                              e.target.checked
+                                ? [...launchIds, i.id]
+                                : launchIds.filter((id) => id !== i.id),
+                            )
+                          }
+                        />
+                        <span>{i.prompt}</span>
+                      </label>
+                    ))}
+                </details>
+              )}
               {kind === "quest" && (
                 <div className="quest-materials">
                   <h3>Материалы для локаций</h3>
@@ -1370,9 +1515,9 @@ export default function Games() {
                         {sets.map((set) => (
                           <option key={set.id} value={set.id}>
                             {set.title} ·{" "}
-                            {set.id.startsWith("gogetter")
+                            {set.sourceKey?.startsWith("gogetter")
                               ? "GoGetter"
-                              : set.id.startsWith("essential")
+                              : set.sourceKey?.startsWith("essential")
                                 ? "Murphy"
                                 : "Мой"}
                           </option>
@@ -1442,6 +1587,155 @@ export default function Games() {
           </form>
         </div>
       )}
+      {assigning && (
+        <div
+          className="game-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Назначить из библиотеки"
+        >
+          <form
+            className="panel launch-dialog"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setError("");
+              setBusy(true);
+              const f = new FormData(e.currentTarget);
+              try {
+                await api("/api/library/homework", {
+                  setId: assigning.id,
+                  studentId: Number(f.get("student")),
+                  title: String(f.get("title")),
+                  body: String(f.get("body")),
+                  due: String(f.get("due")),
+                  itemIds: assignmentIds,
+                });
+                setAssigning(null);
+                setNotice(
+                  "Домашнее задание назначено. Оно появилось в кабинете ученика.",
+                );
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <div className="modal-head">
+              <h2>Назначить домашнее задание</h2>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Закрыть"
+                onClick={() => setAssigning(null)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-content">
+              {error && (
+                <div className="form-error" role="alert">
+                  {error}
+                </div>
+              )}
+              <label className="field">
+                Название
+                <input
+                  name="title"
+                  defaultValue={assigning.title}
+                  required
+                  maxLength={200}
+                />
+              </label>
+              <label className="field">
+                Ученик
+                <select
+                  name="student"
+                  aria-label="Ученик ДЗ"
+                  required
+                  defaultValue={student || ""}
+                >
+                  <option value="" disabled>
+                    Выберите ученика
+                  </option>
+                  {data.students.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                Срок
+                <input
+                  name="due"
+                  type="date"
+                  defaultValue={addDaysStr(todayVN(), 7)}
+                  required
+                />
+              </label>
+              <label className="field">
+                Инструкция
+                <textarea name="body" rows={2} maxLength={20000} />
+              </label>
+              <div className="card-topline">
+                <strong>Задания · {assignmentIds.length}</strong>
+                <button
+                  className="text-btn"
+                  type="button"
+                  onClick={() =>
+                    setAssignmentIds(
+                      assignmentIds.length
+                        ? []
+                        : assigning.items.map((i) => i.id),
+                    )
+                  }
+                >
+                  {assignmentIds.length ? "Снять выбор" : "Выбрать все"}
+                </button>
+              </div>
+              <div className="task-selection">
+                {assigning.items.map((i) => (
+                  <label key={i.id}>
+                    <input
+                      type="checkbox"
+                      checked={assignmentIds.includes(i.id)}
+                      onChange={(e) =>
+                        setAssignmentIds(
+                          e.target.checked
+                            ? [...assignmentIds, i.id]
+                            : assignmentIds.filter((id) => id !== i.id),
+                        )
+                      }
+                    />
+                    <span>
+                      <small>
+                        {i.type === "pair"
+                          ? "Пара"
+                          : i.type === "sentence"
+                            ? "Фраза"
+                            : "Вопрос"}
+                      </small>
+                      {i.prompt}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <button
+                className="btn primary"
+                disabled={busy || !assignmentIds.length}
+              >
+                Назначить ДЗ
+                <ArrowRight size={16} />
+              </button>
+              <p className="muted small-text">
+                Сохранится текущая версия выбранных заданий. Последующие правки
+                набора не изменят уже назначенное ДЗ.
+              </p>
+            </div>
+          </form>
+        </div>
+      )}
       {draft && (
         <div
           className="game-overlay"
@@ -1496,10 +1790,15 @@ export default function Games() {
                   <div className="card-topline">
                     <select
                       aria-label={`Тип задания ${index + 1}`}
-                      value={i.type}
+                      value={
+                        i.type === "choice" && !i.options ? "short" : i.type
+                      }
                       onChange={(e) =>
                         draftItem(index, {
-                          type: e.target.value as Item["type"],
+                          type:
+                            e.target.value === "short"
+                              ? "choice"
+                              : (e.target.value as Item["type"]),
                           options:
                             e.target.value === "choice"
                               ? [i.answer || "Ответ", "Другой вариант"]
@@ -1509,7 +1808,11 @@ export default function Games() {
                     >
                       <option value="pair">Пара карточек</option>
                       <option value="sentence">Сборка фразы</option>
-                      <option value="choice">Вопрос</option>
+                      <option value="choice">Вопрос с вариантами</option>
+                      <option value="short">Короткий ответ</option>
+                      <option value="text">
+                        Развёрнутый ответ · проверка преподавателя
+                      </option>
                     </select>
                     <button
                       className="icon-btn"
@@ -1545,7 +1848,7 @@ export default function Games() {
                       }
                     />
                   </label>
-                  {i.type === "choice" && (
+                  {i.type === "choice" && i.options && (
                     <label className="field">
                       Варианты, включая правильный
                       <textarea

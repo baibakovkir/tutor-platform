@@ -196,6 +196,16 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
     [week, setWeek] = useState(weekStartStr(todayVN())),
     [payFilter, setPayFilter] = useState("all"),
     [hwFilter, setHwFilter] = useState("all");
+  const [librarySets, setLibrarySets] = useState<
+    { id: string; title: string; course: string }[]
+  >([]);
+  useEffect(() => {
+    fetch("/api/games/sets", { cache: "no-store" })
+      .then(async (r) => {
+        if (r.ok) setLibrarySets(await r.json());
+      })
+      .catch(() => {});
+  }, []);
   const [activeGames, setActiveGames] = useState<
     {
       id: string;
@@ -482,6 +492,7 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
             title: get("title"),
             body: get("body"),
             due: get("due"),
+            learningSetId: get("learningSetId") || null,
             exerciseId: get("exerciseId") ? Number(get("exerciseId")) : null,
             sessionId: modal.lesson?.id || null,
           });
@@ -576,7 +587,7 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
         <nav aria-label="Основная навигация">
           {nav
             .filter(
-              (n) => isTeacher || !["students", "exercises"].includes(n.id),
+              (n) => n.id !== "exercises" && (isTeacher || n.id !== "students"),
             )
             .map((n) => (
               <button
@@ -596,7 +607,7 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
             ))}
           <Link className="nav-item" href="/games">
             <Gamepad2 size={19} />
-            Игровые занятия
+            Задания и игры
           </Link>
         </nav>
         <div className="sidebar-bottom">
@@ -891,7 +902,9 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                   </div>
                   <button
                     className="btn"
-                    onClick={() => setTab(isTeacher ? "exercises" : "homework")}
+                    onClick={() =>
+                      isTeacher ? location.assign("/games") : setTab("homework")
+                    }
                   >
                     {isTeacher ? "Открыть библиотеку" : "Мои задания"}
                     <ArrowUpRight size={17} />
@@ -2050,19 +2063,20 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                       required
                     />
                   </Field>
-                  <Field label="Интерактивное задание · необязательно">
-                    <select
-                      name="exerciseId"
-                      defaultValue={modal.exercise?.id || ""}
-                    >
+                  <Field label="Набор из общей библиотеки · необязательно">
+                    <select name="learningSetId" defaultValue="">
                       <option value="">Только текст и материалы</option>
-                      {data.exercises.map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {e.title}
+                      {librarySets.map((set) => (
+                        <option key={set.id} value={set.id}>
+                          {set.title} · {set.course}
                         </option>
                       ))}
                     </select>
                   </Field>
+                  <p className="muted small-text">
+                    Отдельные задания можно выбрать через кнопку «В ДЗ» в общей
+                    библиотеке.
+                  </p>
                   <Field label="Прикрепить материал · до 20 МБ">
                     <input type="file" name="file" />
                   </Field>
@@ -2092,6 +2106,18 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                     </span>
                   </div>
                   <h3 className="work-title">{currentWork.title}</h3>
+                  {currentWork.learning_set_id && (
+                    <Link
+                      className="btn primary wide"
+                      href={"/practice/" + currentWork.id}
+                    >
+                      {isTeacher
+                        ? "Посмотреть ответы ученика"
+                        : "Выполнить задания"}{" "}
+                      · {currentWork.learning_count} заданий
+                      <ArrowRight size={16} />
+                    </Link>
+                  )}
                   {isTeacher && (
                     <p className="muted">{currentWork.studentName}</p>
                   )}
@@ -2231,6 +2257,10 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                         </select>
                       </Field>
                     </>
+                  ) : currentWork.learning_set_id ? (
+                    <p className="muted">
+                      Ответы отправляются в наборе по кнопке выше.
+                    </p>
                   ) : currentWork.kind === "choice" ? (
                     <fieldset className="choices">
                       <legend>Выберите ответ</legend>
@@ -2282,6 +2312,11 @@ export default function Classroom({ pupil = false }: { pupil?: boolean }) {
                   Закрыть
                 </button>
                 <button
+                  hidden={
+                    modal.kind === "work" &&
+                    !isTeacher &&
+                    !!currentWork?.learning_set_id
+                  }
                   className="btn primary"
                   disabled={
                     busy ||

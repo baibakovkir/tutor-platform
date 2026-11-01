@@ -17,23 +17,25 @@ import {
   GameError,
 } from "./engine";
 import type { GameSet, State, Command, Room } from "./types";
-import bank from "../../../content/games/bank.json";
+
 export const itemSchema = z
   .object({
     id: z.string().min(1).max(120),
-    type: z.enum(["pair", "sentence", "choice"]),
+    type: z.enum(["pair", "sentence", "choice", "text"]),
     prompt: z.string().trim().min(1).max(2000),
-    answer: z.string().trim().min(1).max(2000),
+    answer: z.string().trim().max(2000),
     options: z.array(z.string().min(1).max(2000)).min(2).max(8).optional(),
     alternatives: z.array(z.string().min(1).max(2000)).max(10).optional(),
     explanation: z.string().max(3000).default(""),
     hint: z.string().max(1000).optional(),
   })
   .superRefine((i, c) => {
+    if (i.type !== "text" && !i.answer)
+      c.addIssue({ code: "custom", message: "Укажите правильный ответ." });
     if (
       i.type === "choice" &&
-      (!i.options ||
-        !i.options.includes(i.answer) ||
+      i.options &&
+      (!i.options.includes(i.answer) ||
         new Set(i.options).size !== i.options.length)
     )
       c.addIssue({
@@ -47,7 +49,7 @@ export const setSchema = z
     course: z.string().trim().max(150).default("Свои материалы"),
     unit: z.number().int().min(0).max(1000).default(0),
     topic: z.string().max(200).default(""),
-    items: z.array(itemSchema).min(2).max(150),
+    items: z.array(itemSchema).min(1).max(150),
   })
   .superRefine((s, c) => {
     if (new Set(s.items.map((i) => i.id)).size !== s.items.length)
@@ -64,7 +66,8 @@ export const roomSchema = z.object({
   mode: z.enum(["guided", "coop", "duel"]),
   lessonId: z.number().int().positive().nullable().optional(),
   timerSeconds: z.number().int().min(0).max(300).default(0),
-  count: z.number().int().min(2).max(30).default(8),
+  count: z.number().int().min(1).max(30).default(8),
+  itemIds: z.array(z.string().min(1).max(120)).min(1).max(150).optional(),
   stageSetIds: z.array(z.string().min(1).max(100)).length(5).optional(),
 });
 export const commandSchema = z.object({
@@ -79,9 +82,12 @@ export const commandSchema = z.object({
     "resume",
     "finish",
     "hint",
+    "mark",
   ]),
   card: z.string().max(100).optional(),
   answer: z.string().max(2000).optional(),
+  target: z.enum(["teacher", "student"]).optional(),
+  correct: z.boolean().optional(),
 });
 export type RoomRow = {
   id: string;
@@ -92,22 +98,36 @@ export type RoomRow = {
   updated_at: string;
 };
 export async function sets(a: Actor) {
-  const custom =
-    a.role === "teacher"
-      ? await rows<{ id: string; payload: GameSet }>(
-          "SELECT id,payload FROM game_sets WHERE owner_id=:owner ORDER BY updated_at DESC",
-          { owner: a.ownerId },
-        )
-      : [];
-  return [
-    ...(bank as GameSet[]),
-    ...custom.map((x) => ({ ...x.payload, id: x.id })),
-  ];
+  const data = await rows<{
+    id: string;
+    payload: GameSet;
+    source_key: string | null;
+    owner_id: number | null;
+    sourceKey: string | null;
+    base_set_id: string | null;
+  }>(
+    `SELECT s.*,COALESCE(s.source_key,b.source_key) AS "sourceKey" FROM game_sets s LEFT JOIN game_sets b ON b.id=s.base_set_id WHERE s.owner_id=:owner OR (s.owner_id IS NULL AND NOT EXISTS(SELECT 1 FROM game_sets own WHERE own.owner_id=:owner AND own.base_set_id=s.id)) ORDER BY s.updated_at DESC`,
+    { owner: a.ownerId },
+  );
+  return data.map((r) => ({
+    ...r.payload,
+    id: r.id,
+    sourceKey: r.sourceKey || undefined,
+    baseSetId: r.base_set_id || undefined,
+    isCustom: r.owner_id !== null,
+  }));
 }
 export async function getSet(a: Actor, id: string) {
-  const set = (await sets(a)).find((s) => s.id === id);
-  if (!set) throw new HttpError(404, "Набор не найден.");
-  return set;
+  const all = await sets(a);
+  const set = all.find((s) => s.id === id || s.sourceKey === id);
+  if (set) return set;
+  const [base] = await rows<{ source_key: string }>(
+    "SELECT source_key FROM game_sets WHERE id::text=:id AND owner_id IS NULL",
+    { id },
+  );
+  const override = base && all.find((s) => s.sourceKey === base.source_key);
+  if (override) return override;
+  throw new HttpError(404, "Набор не найден.");
 }
 export async function roomRows(a: Actor, id?: string): Promise<RoomRow[]> {
   return rows<RoomRow>(
@@ -135,16 +155,20 @@ export async function createRoom(a: Actor, input: z.infer<typeof roomSchema>) {
     if (!l.length) throw new HttpError(404, "Занятие не найдено.");
   }
   const set = await getSet(a, input.setId);
-  const items = set.items
+  const selectedItems = input.itemIds
+    ? set.items.filter((i) => input.itemIds!.includes(i.id))
+    : set.items;
+  if (input.itemIds && selectedItems.length !== new Set(input.itemIds).size)
+    throw new HttpError(400, "Часть заданий не найдена в наборе.");
+  const items = selectedItems
     .filter(
       (i) =>
         input.kind === "quest" ||
-        i.type ===
-          (input.kind === "pairs"
-            ? "pair"
-            : input.kind === "sentence"
-              ? "sentence"
-              : "choice"),
+        (input.kind === "pairs"
+          ? i.type === "pair"
+          : input.kind === "sentence"
+            ? i.type === "sentence"
+            : ["choice", "text"].includes(i.type)),
     )
     .slice(
       0,
@@ -162,7 +186,11 @@ export async function createRoom(a: Actor, input: z.infer<typeof roomSchema>) {
       const source = await getSet(a, input.stageSetIds[stage]);
       stageItems.push(
         source.items
-          .filter((i) => i.type === stageTypes[stage])
+          .filter(
+            (i) =>
+              i.type === stageTypes[stage] ||
+              (stageTypes[stage] === "choice" && i.type === "text"),
+          )
           .slice(0, stage === 0 ? 3 : 2)
           .map((i) => ({
             ...i,
@@ -174,7 +202,14 @@ export async function createRoom(a: Actor, input: z.infer<typeof roomSchema>) {
     }
   }
   const state = createState(
-    { ...input, items, stageItems, course: set.course, unit: set.unit },
+    {
+      ...input,
+      setId: set.id,
+      items,
+      stageItems,
+      course: set.course,
+      unit: set.unit,
+    },
     randomUUID(),
   );
   const id = randomUUID();

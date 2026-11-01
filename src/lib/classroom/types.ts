@@ -23,6 +23,8 @@ export type Lesson = {
   cancelled: boolean;
 };
 export type Homework = {
+  learning_set_id?: string | null;
+  learning_count?: number;
   id: number;
   student_id: number;
   session_id: number | null;

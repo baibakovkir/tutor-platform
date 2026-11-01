@@ -13,6 +13,7 @@ import {
   run,
   HttpError,
 } from "@/lib/classroom/core";
+import { sequelize } from "@/lib/db/index";
 import { z } from "zod";
 export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
@@ -28,7 +29,8 @@ export async function GET(req: Request) {
             counts: {
               pair: items.filter((i) => i.type === "pair").length,
               sentence: items.filter((i) => i.type === "sentence").length,
-              choice: items.filter((i) => i.type === "choice").length,
+              choice: items.filter((i) => ["choice", "text"].includes(i.type))
+                .length,
             },
           })),
       { headers: { "Cache-Control": "no-store" } },
@@ -44,36 +46,58 @@ export async function POST(req: Request) {
     teacher(a);
     const b = await req.json();
     const payload = setSchema.parse(b);
-    const id = b.id ? z.string().uuid().parse(b.id) : randomUUID();
-    if (b.id) {
-      const own = await rows(
-        "SELECT id FROM game_sets WHERE id=:id AND owner_id=:owner",
-        { id, owner: a.ownerId },
-      );
-      if (!own.length)
-        throw new HttpError(
-          404,
-          "Можно редактировать только собственную копию.",
+    let id: string = randomUUID();
+    await sequelize.transaction(async (transaction) => {
+      if (b.id) {
+        const requested = z.string().uuid().parse(b.id);
+        const [source] = await rows<{ id: string; owner_id: number | null }>(
+          "SELECT id,owner_id FROM game_sets WHERE id=:id AND (owner_id=:owner OR owner_id IS NULL) FOR UPDATE",
+          { id: requested, owner: a.ownerId },
+          transaction,
         );
-      await run(
-        "UPDATE game_sets SET title=:title,payload=CAST(:payload AS jsonb),updated_at=now() WHERE id=:id AND owner_id=:owner",
-        {
-          id,
-          owner: a.ownerId,
-          title: payload.title,
-          payload: JSON.stringify({ ...payload, id }),
-        },
-      );
-    } else
-      await run(
-        "INSERT INTO game_sets(id,owner_id,title,payload) VALUES(:id,:owner,:title,CAST(:payload AS jsonb))",
-        {
-          id,
-          owner: a.ownerId,
-          title: payload.title,
-          payload: JSON.stringify({ ...payload, id }),
-        },
-      );
+        if (!source) throw new HttpError(404, "Набор не найден.");
+        if (source.owner_id !== null) {
+          id = source.id;
+          await run(
+            "UPDATE game_sets SET title=:title,payload=CAST(:payload AS jsonb),updated_at=now() WHERE id=:id",
+            {
+              id,
+              title: payload.title,
+              payload: JSON.stringify({ ...payload, id }),
+            },
+            transaction,
+          );
+        } else {
+          const [own] = await rows<{ id: string }>(
+            "SELECT id FROM game_sets WHERE owner_id=:owner AND base_set_id=:base",
+            { owner: a.ownerId, base: source.id },
+            transaction,
+          );
+          id = own?.id || randomUUID();
+          await run(
+            `INSERT INTO game_sets(id,owner_id,title,payload,base_set_id) VALUES(:id,:owner,:title,CAST(:payload AS jsonb),:base) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,payload=EXCLUDED.payload,updated_at=now()`,
+            {
+              id,
+              owner: a.ownerId,
+              title: payload.title,
+              payload: JSON.stringify({ ...payload, id }),
+              base: source.id,
+            },
+            transaction,
+          );
+        }
+      } else
+        await run(
+          "INSERT INTO game_sets(id,owner_id,title,payload) VALUES(:id,:owner,:title,CAST(:payload AS jsonb))",
+          {
+            id,
+            owner: a.ownerId,
+            title: payload.title,
+            payload: JSON.stringify({ ...payload, id }),
+          },
+          transaction,
+        );
+    });
     return Response.json({ id }, { status: b.id ? 200 : 201 });
   } catch (e) {
     return errorResponse(e);

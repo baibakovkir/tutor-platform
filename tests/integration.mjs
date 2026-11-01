@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { checkLibrary, checkLibraryBrowser } from "./library.mjs";
 import { checkGames, checkGamesBrowser } from "./games.mjs";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
@@ -396,6 +397,13 @@ try {
             })
         : undefined,
   });
+  const libraryFixture = await checkLibrary({
+    teacher,
+    otherTeacher,
+    pupil,
+    otherPupil,
+    studentId: s.id,
+  });
   if (process.env.PLAYWRIGHT_MODULE) {
     const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
     browser = await chromium.launch({
@@ -488,23 +496,6 @@ try {
       path: "artifacts/schedule-desktop.png",
       fullPage: true,
     });
-    await page
-      .getByRole("button", { name: "Библиотека заданий", exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: "Создать задание", exact: true })
-      .waitFor();
-    await page
-      .getByRole("button", { name: "Копировать", exact: true })
-      .first()
-      .click();
-    await page
-      .getByRole("dialog")
-      .getByLabel("Название", { exact: true })
-      .fill("Копия для проверки");
-    await page.getByRole("button", { name: "Сохранить", exact: true }).click();
-    await page.getByRole("heading", { name: "Копия для проверки" }).waitFor();
-    pass("browser exercise template duplication");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "Обзор", exact: true }).click();
     await page.screenshot({
@@ -546,6 +537,7 @@ try {
       path: "artifacts/pupil-mobile.png",
       fullPage: true,
     });
+    await checkLibraryBrowser({ page, pupilPage, base, studentId: s.id, db });
     await checkGamesBrowser({ page, pupilPage, base, studentId: s.id, db });
     assert.deepEqual(errors, []);
     await context.close();
@@ -606,7 +598,10 @@ try {
   // Delete only records belonging to the two disposable fixture owners.
   if (owners.length) {
     await db.query("DELETE FROM game_rooms WHERE owner_id=ANY($1)", [owners]);
-    await db.query("DELETE FROM game_sets WHERE owner_id=ANY($1)", [owners]);
+    await db.query(
+      "DELETE FROM learning_attempts WHERE homework_id IN (SELECT id FROM classroom_homework WHERE owner_id=ANY($1))",
+      [owners],
+    );
     const files = await db.query(
       "SELECT f.id FROM classroom_files f JOIN classroom_homework h ON h.id=f.homework_id WHERE h.owner_id=ANY($1)",
       [owners],
@@ -622,6 +617,7 @@ try {
     await db.query("DELETE FROM classroom_homework WHERE owner_id=ANY($1)", [
       owners,
     ]);
+    await db.query("DELETE FROM game_sets WHERE owner_id=ANY($1)", [owners]);
     await db.query("DELETE FROM classroom_exercises WHERE owner_id=ANY($1)", [
       owners,
     ]);

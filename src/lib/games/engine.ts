@@ -130,9 +130,11 @@ export function createState(
   const items =
     input.kind === "quest"
       ? input.stageItems?.flat() || input.items
-      : input.items.filter((i) => i.type === type);
-  if (items.length < 2)
-    throw new GameError(400, "Нужно минимум два задания подходящего типа.");
+      : input.items.filter(
+          (i) => i.type === type || (type === "choice" && i.type === "text"),
+        );
+  if (items.length < 1)
+    throw new GameError(400, "Нужно хотя бы одно задание подходящего типа.");
   const stages: State["stages"] =
     input.kind === "quest"
       ? [
@@ -156,7 +158,7 @@ export function createState(
             title: "Кафе · сделайте заказ",
             type: "choice",
             itemIds: items
-              .filter((i) => i.type === "choice")
+              .filter((i) => i.type === "choice" || i.type === "text")
               .slice(0, 2)
               .map((i) => i.id),
           },
@@ -172,7 +174,7 @@ export function createState(
             title: "Парк · откройте финал",
             type: "choice",
             itemIds: items
-              .filter((i) => i.type === "choice")
+              .filter((i) => i.type === "choice" || i.type === "text")
               .slice(2, 4)
               .map((i) => i.id),
           },
@@ -246,8 +248,11 @@ function reveal(s: State) {
 }
 function ready(s: State) {
   return s.mode === "duel"
-    ? !!s.answers.teacher && !!s.answers.student
-    : !!s.answers[s.mode === "guided" ? "student" : s.turn];
+    ? !!s.answers.teacher &&
+        !!s.answers.student &&
+        s.answers.teacher.correct !== null &&
+        s.answers.student.correct !== null
+    : s.answers[s.mode === "guided" ? "student" : s.turn]?.correct != null;
 }
 function advance(s: State, now: number) {
   if (
@@ -285,7 +290,9 @@ export function timeoutState(s: State, now = Date.now()): boolean {
       s.answers[r] = { response: "Время вышло", correct: false };
       record(s, r, "Время вышло", false);
     }
-  reveal(s);
+  if (Object.values(s.answers).some((a) => a?.correct === null))
+    s.deadline = null;
+  else reveal(s);
   return true;
 }
 export function applyCommand(
@@ -299,7 +306,7 @@ export function applyCommand(
   if (s.phase === "finished")
     throw new GameError(409, "Игра завершена. Создайте новую игру.");
   if (
-    ["pause", "resume", "finish", "next"].includes(c.action) &&
+    ["pause", "resume", "finish", "next", "mark"].includes(c.action) &&
     role !== "teacher"
   )
     throw new GameError(403, "Управляет преподаватель.");
@@ -314,6 +321,11 @@ export function applyCommand(
     if (s.remainingMs !== null) s.deadline = now + s.remainingMs;
     s.remainingMs = null;
   } else if (c.action === "finish") {
+    for (const r of ["teacher", "student"] as Role[])
+      if (s.answers[r]?.correct === null) {
+        record(s, r, s.answers[r]!.response, false, true);
+        s.answers[r]!.correct = false;
+      }
     s.phase = "finished";
     reveal(s);
   } else {
@@ -355,6 +367,22 @@ export function applyCommand(
         }
         advance(s, now);
       }
+    } else if (c.action === "mark") {
+      const item = activeItems(s)[s.round];
+      const target = c.target;
+      if (
+        item?.type !== "text" ||
+        !target ||
+        typeof c.correct !== "boolean" ||
+        !s.answers[target] ||
+        s.answers[target]!.correct !== null
+      )
+        throw new GameError(409, "Нет ответа для проверки.");
+      if (s.mode === "duel" && (!s.answers.student || !s.answers.teacher))
+        throw new GameError(409, "Сначала должны ответить оба участника.");
+      s.answers[target]!.correct = c.correct;
+      record(s, target, s.answers[target]!.response, c.correct);
+      if (ready(s)) reveal(s);
     } else if (c.action === "hint") {
       s.hinted = true;
     } else if (c.action === "clear") {
@@ -423,11 +451,19 @@ export function applyCommand(
         if (!i) throw new GameError(400, "Нет задания.");
         const response = String(c.answer || "").trim();
         if (!response) throw new GameError(400, "Напишите ответ.");
-        const correct = [i.answer, ...(i.alternatives || [])].some(
-          (a) => normalize(a) === normalize(response),
-        );
+        const correct =
+          i.type === "text"
+            ? null
+            : [i.answer, ...(i.alternatives || [])].some(
+                (a) => normalize(a) === normalize(response),
+              );
         s.answers[role] = { response, correct };
-        record(s, role, response, correct);
+        if (correct !== null) record(s, role, response, correct);
+        if (
+          i.type === "text" &&
+          (s.mode !== "duel" || (s.answers.teacher && s.answers.student))
+        )
+          s.deadline = null;
         if (ready(s)) reveal(s);
       } else throw new GameError(400, "Неизвестный ход.");
     }
@@ -475,10 +511,16 @@ export function publicState(s: State, role: Role): PublicState {
     if (answers[r])
       a[r] = {
         submitted: true,
-        ...(s.revealed || r === role
+        ...(s.revealed ||
+        r === role ||
+        (role === "teacher" &&
+          current?.type === "text" &&
+          (s.mode !== "duel" || (!!answers.teacher && !!answers.student)))
           ? {
               response: answers[r]!.response,
-              ...(s.revealed ? { correct: answers[r]!.correct } : {}),
+              ...(s.revealed || current?.type === "text"
+                ? { correct: answers[r]!.correct }
+                : {}),
             }
           : {}),
       };

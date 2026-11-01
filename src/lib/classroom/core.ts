@@ -122,6 +122,7 @@ export const lessonInput = z
   })
   .refine((v) => v.end > v.start, "Конец занятия должен быть позже начала.");
 export const homeworkInput = z.object({
+  learningSetId: z.string().max(100).nullable().default(null),
   studentId: z.number().int().positive(),
   title: text,
   body: z.string().max(20000).default(""),

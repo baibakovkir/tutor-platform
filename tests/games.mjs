@@ -16,7 +16,14 @@ export async function checkGames({
     return d;
   }
   const summaries = await call(teacher, "/sets");
-  assert.equal(summaries.length, 124);
+  assert.equal(
+    summaries.filter(
+      (s) =>
+        s.sourceKey?.startsWith("essential-") ||
+        s.sourceKey?.startsWith("gogetter-"),
+    ).length,
+    124,
+  );
   await call(pupil, "/sets", undefined, 403);
   const set = await call(teacher, "/sets?id=essential-1");
   assert.equal(set.items.filter((i) => i.type === "sentence").length, 8);
@@ -212,7 +219,7 @@ export async function checkGamesBrowser({
     const card = page.locator(".game-set").filter({
       has: page.getByRole("heading", { name: "1. am/is/are", exact: true }),
     });
-    await card.getByRole("button", { name: "Играть", exact: true }).click();
+    await card.getByRole("button", { name: "На урок", exact: true }).click();
     const labels = {
       pairs: "Найди пару",
       sentence: "Собери фразу",
@@ -378,8 +385,9 @@ export async function checkGamesBrowser({
   await page
     .getByRole("button", { name: "Сохранить набор", exact: true })
     .click();
-  await page.getByRole("dialog", { name: "Настроить игру" }).waitFor();
-  await page.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await page
+    .getByRole("heading", { name: "Мой английский набор", exact: true })
+    .waitFor();
   console.log(
     "PASS library copy, editor persistence and launch of custom materials",
   );

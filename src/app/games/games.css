@@ -1121,3 +1121,48 @@
 .quest-materials h3 {
   font-size: 13px;
 }
+.practice-index {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 7px !important;
+  margin-bottom: 25px;
+}
+.practice-index .btn {
+  min-width: 38px;
+  padding: 9px;
+}
+.task-selection {
+  max-height: 330px;
+  overflow: auto;
+  border: 1px solid #e5ddec;
+  border-radius: 10px;
+  padding: 12px;
+}
+.task-selection > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #9985aa;
+  padding: 6px;
+}
+.task-selection > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 3px;
+  border-bottom: 1px solid #eee8f3;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #95839f;
+}
+.task-selection input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  accent-color: #7560d4;
+}
+.task-selection small {
+  display: block;
+  font-size: 9px;
+  color: #b5a5c2;
+}
