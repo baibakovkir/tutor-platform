@@ -4,15 +4,15 @@ After=network.target docker.service
 Requires=docker.service
 [Service]
 Type=simple
-User=user
-Group=user
-WorkingDirectory=/home/user/tutor-platform/current
-EnvironmentFile=/home/user/tutor-platform/.env
+User=@TUTOR_USER@
+Group=@TUTOR_GROUP@
+WorkingDirectory=@TUTOR_ROOT@/current
+EnvironmentFile=@TUTOR_ROOT@/.env
 Environment=NODE_ENV=production
 Environment=PORT=13003
 Environment=HOSTNAME=127.0.0.1
 Environment=NEXT_TELEMETRY_DISABLED=1
-Environment=UPLOAD_DIR=/home/user/tutor-platform/storage/uploads
+Environment=UPLOAD_DIR=@TUTOR_ROOT@/storage/uploads
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
@@ -21,7 +21,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/user/tutor-platform/storage
+ReadWritePaths=@TUTOR_ROOT@/storage
 MemoryMax=600M
 CPUQuota=100%
 [Install]

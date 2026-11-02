@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-TUTOR_ROOT="${TUTOR_ROOT:-/home/user/tutor-platform}"
+TUTOR_ROOT="${TUTOR_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 TUTOR_BACKUP="$TUTOR_ROOT/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$TUTOR_BACKUP"
 docker compose --project-directory "$TUTOR_ROOT" --env-file "$TUTOR_ROOT/.env" exec -T db pg_dump -U tutor -d tutor -Fc > "$TUTOR_BACKUP/database.dump"

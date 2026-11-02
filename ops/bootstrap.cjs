@@ -26,7 +26,7 @@ const fs = require("node:fs/promises");
       },
     );
     await fs.writeFile(
-      process.env.ACCESS_FILE || "/home/user/tutor-platform/access.txt",
+      process.env.ACCESS_FILE || "access.txt",
       `https://tutor.baibakovkir.space\nEmail: ${email}\nPassword: ${password}\n\nСменить пароль: Настройки → Безопасность кабинета.\n`,
       { mode: 0o600, flag: "wx" },
     );

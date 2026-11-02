@@ -45,17 +45,18 @@ npm run dev
 Выбран **SSH + готовая standalone-сборка + systemd**, база в отдельном Docker volume. Сборка выполняется локально, на сервер отправляется около 70 МБ готового приложения. Это экономнее по месту и памяти, чем новая многослойная сборка Node-образа на небольшом сервере. Существующие сервисы не затрагиваются.
 
 ```bash
-bash ops/deploy.sh
+TUTOR_TARGET=tutor-host bash ops/deploy.sh
 ```
 
-По умолчанию используется `user@176.123.163.174` (переопределение `TUTOR_TARGET`). `ssh -F /dev/null` обходит некорректные права системного include SSH в текущем окружении. Ключи и проверка known_hosts остаются штатными.
+`tutor-host` — ваш приватный алиас в `~/.ssh/config`. Укажите там адрес сервера, SSH-пользователя и ключ. `TUTOR_TARGET` обязателен: публичный репозиторий не содержит адреса или логина сервера. Используется штатная конфигурация SSH и проверка `known_hosts`.
 
-- Каталог: `/home/user/tutor-platform`; релизы: `releases/<UTC timestamp>`, ссылка `current`.
+По умолчанию приложение размещается в `~/tutor-platform` на сервере. `TUTOR_REMOTE_ROOT` меняет каталог (абсолютный путь или путь относительно домашнего каталога SSH-пользователя; без пробелов). Ниже `<install-root>` обозначает этот каталог. systemd-шаблоны получают фактический путь, пользователя и группу при развёртывании.
+- Каталог: `<install-root>`; релизы: `releases/<UTC timestamp>`, ссылка `current`.
 - Приложение: systemd `tutor-platform.service`, только `127.0.0.1:13003`.
 - База: Docker Compose `tutor-platform`, PostgreSQL 17, только `127.0.0.1:15440`, volume `tutor-platform_pgdata`.
-- Файлы: `/home/user/tutor-platform/storage/uploads`. Файлы не публикуются nginx; загрузка через API с проверкой доступа.
-- Секреты: `/home/user/tutor-platform/.env`, права 600. Они создаются на сервере, не входят в архив приложения и Git.
-- Первые реквизиты: `/home/user/tutor-platform/access.txt`, права 600. При обновлениях пароль не сбрасывается. После первого входа смените его в настройках; смена отзывает старые сеансы преподавателя.
+- Файлы: `<install-root>/storage/uploads`. Файлы не публикуются nginx; загрузка через API с проверкой доступа.
+- Секреты: `<install-root>/.env`, права 600. Они создаются на сервере, не входят в архив приложения и Git.
+- Первые реквизиты: `<install-root>/access.txt`, права 600. При обновлениях пароль не сбрасывается. После первого входа смените его в настройках; смена отзывает старые сеансы преподавателя.
 - Nginx: `/etc/nginx/conf.d/tutor-platform.conf`. Отдельный сертификат Certbot, webroot `/var/www/tutor-acme`, HTTP → HTTPS, hook перезагрузки nginx после продления.
 - Проверка: `GET /api/healthz` проверяет подключение к базе и наличие схемы. Неудачная проверка после перезапуска возвращает ссылку на предыдущий релиз.
 
@@ -63,13 +64,13 @@ bash ops/deploy.sh
 
 ## Бэкапы и восстановление
 
-Таймер `tutor-platform-backup.timer` запускает `ops/backup.sh` ежедневно в 03:40 UTC. Бэкап также создаётся перед обновлением: PostgreSQL custom dump, файлы, runtime env, путь релиза. Каталог `/home/user/tutor-platform/backups/<timestamp>`, права закрыты umask 077; завершённые копии старше 14 дней удаляются. Копии находятся на том же сервере — для защиты от потери сервера нужно дополнительно выносить их на другое хранилище.
+Таймер `tutor-platform-backup.timer` запускает `ops/backup.sh` ежедневно в 03:40 UTC. Бэкап также создаётся перед обновлением: PostgreSQL custom dump, файлы, runtime env, путь релиза. Каталог `<install-root>/backups/<timestamp>`, права закрыты umask 077; завершённые копии старше 14 дней удаляются. Копии находятся на том же сервере — для защиты от потери сервера нужно дополнительно выносить их на другое хранилище.
 
 Ручной запуск и проверка:
 
 ```bash
-ssh -F /dev/null user@176.123.163.174 'bash /home/user/tutor-platform/ops/backup.sh'
-ssh -F /dev/null user@176.123.163.174 'systemctl status tutor-platform; systemctl list-timers tutor-platform-backup.timer'
+ssh tutor-host 'bash ~/tutor-platform/ops/backup.sh'
+ssh tutor-host 'systemctl status tutor-platform; systemctl list-timers tutor-platform-backup.timer'
 ```
 
 Откат приложения: переключить `current` на предыдущий релиз и перезапустить сервис. Миграции текущего релиза добавляют таблицы; они совместимы с предыдущей версией. Для восстановления данных сначала остановите сервис, сохраните текущие данные, затем восстановите выбранный dump через `pg_restore --clean --if-exists --no-owner -U tutor -d tutor` внутри контейнера и распакуйте соответствующий `files.tar.gz` в `storage`. Запустите сервис и проверьте health endpoint. Не восстанавливайте базу поверх работающего приложения.
